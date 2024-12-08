@@ -25,13 +25,13 @@ void receive_file_from_client(int client_socket, int data_socket, const std::str
 std::string construct_safe_path(const std::string &relative_path);
 int setup_active_data_connection(const std::string &client_ip, int client_port);
 int setup_passive_data_connection(int control_socket);
+void NLST(int client_socket, int data_socket, const std::string &relative_path = "");
 
 int main()
 {
     int server_socket, client_socket;
     struct sockaddr_in server_addr, client_addr;
     socklen_t client_len = sizeof(client_addr);
-
 
     server_socket = socket(AF_INET, SOCK_STREAM, 0);
     if (server_socket < 0)
@@ -40,12 +40,10 @@ int main()
         return 1;
     }
 
-
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
     server_addr.sin_port = htons(PORT);
-
 
     if (bind(server_socket, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0)
     {
@@ -53,7 +51,6 @@ int main()
         close(server_socket);
         return 1;
     }
-
 
     if (listen(server_socket, 5) < 0)
     {
@@ -96,10 +93,8 @@ void handle_client(int client_socket)
 
     UserRepository user_repo;
 
-
     const char *welcome_msg = "220 Bun venit la serverul FTP\r\n";
     send(client_socket, welcome_msg, strlen(welcome_msg), 0);
-
 
     while (true)
     {
@@ -132,7 +127,7 @@ void handle_client(int client_socket)
         }
         else if (strncmp(buffer, "PASS", 4) == 0)
         {
-            
+
             char password[BUFFER_SIZE] = {0};
             sscanf(buffer, "PASS %s", password);
 
@@ -197,11 +192,37 @@ void handle_client(int client_socket)
             char path[BUFFER_SIZE] = {0};
             if (sscanf(buffer, "LIST %s", path) == 1)
             {
-                list_directory(client_socket,data_socket, path);
+                NLST(client_socket, data_socket, path);
             }
             else
             {
-                list_directory(client_socket, data_socket);
+                NLST(client_socket, data_socket);
+            }
+            close(data_socket);
+        }
+        else if (strncmp(buffer, "NLST", 4) == 0)
+        {
+            if (passive_mode)
+            {
+                data_socket = accept(passive_socket, NULL, NULL);
+                if (data_socket < 0)
+                {
+                    perror("Eroare la accept pe socketul pasiv");
+                }
+                close(passive_socket);
+            }
+            else
+            {
+                data_socket = setup_active_data_connection(client_ip, client_port);
+            }
+            char path[BUFFER_SIZE] = {0};
+            if (sscanf(buffer, "NLST %s", path) == 1)
+            {
+                NLST(client_socket, data_socket, path);
+            }
+            else
+            {
+                NLST(client_socket, data_socket);
             }
             close(data_socket);
         }
@@ -218,7 +239,7 @@ void handle_client(int client_socket)
             }
             char filename[BUFFER_SIZE] = {0};
             sscanf(buffer, "RETR %s", filename);
-            send_file_to_client(client_socket,data_socket, filename);
+            send_file_to_client(client_socket, data_socket, filename);
             close(data_socket);
         }
         else if (strncmp(buffer, "STOR", 4) == 0)
@@ -289,7 +310,7 @@ int setup_passive_data_connection(int control_socket)
     memset(&passive_addr, 0, sizeof(passive_addr));
     passive_addr.sin_family = AF_INET;
     passive_addr.sin_addr.s_addr = INADDR_ANY;
-    passive_addr.sin_port = 0; 
+    passive_addr.sin_port = 0;
 
     if (bind(passive_socket, (struct sockaddr *)&passive_addr, sizeof(passive_addr)) < 0)
     {
@@ -314,7 +335,7 @@ int setup_passive_data_connection(int control_socket)
     }
 
     int passive_port = ntohs(passive_addr.sin_port);
-    std::string server_ip = "127,0,0,1"; 
+    std::string server_ip = "127,0,0,1";
 
     char pasv_response[BUFFER_SIZE];
     snprintf(pasv_response, sizeof(pasv_response), "227 Entering Passive Mode (%s,%d,%d).\r\n", server_ip.c_str(), passive_port / 256, passive_port % 256);
@@ -323,16 +344,15 @@ int setup_passive_data_connection(int control_socket)
     return passive_socket;
 }
 
-
 std::string construct_safe_path(const std::string &relative_path)
 {
     try
     {
         std::filesystem::path base_path = std::filesystem::canonical(BASE_PATH);
-        
+
         std::filesystem::path requested_path = base_path / relative_path;
-        //std::cout << "Requested path: " << requested_path << std::endl;
-        
+        // std::cout << "Requested path: " << requested_path << std::endl;
+
         requested_path = std::filesystem::canonical(requested_path);
 
         if (requested_path.string().find(base_path.string()) != 0)
@@ -355,14 +375,13 @@ void receive_file_from_client(int client_socket, int data_socket, const std::str
         std::filesystem::path base_path = std::filesystem::canonical(BASE_PATH);
         std::filesystem::path requested_path = base_path / relative_path;
         requested_path = std::filesystem::weakly_canonical(requested_path);
-        //std::cout << "Requested path: " << requested_path << std::endl;
+        // std::cout << "Requested path: " << requested_path << std::endl;
 
         if (requested_path.string().find(base_path.string()) != 0)
         {
             throw std::runtime_error("Unauthorized access attempt detected.");
         }
-        
-        
+
         FILE *file = fopen(requested_path.c_str(), "wb");
         if (!file)
         {
@@ -429,46 +448,45 @@ void send_file_to_client(int client_socket, int data_socket, const std::string &
     }
 }
 
-void list_directory(int client_socket, int data_socket, const std::string &relative_path)
+void list_directory(int client_socket, int data_socket, const std::string &relative_path) // Echivalentul la ls -l
 {
     char buffer[BUFFER_SIZE] = {0};
 
     try
     {
-        
         std::string full_path = construct_safe_path(relative_path);
 
         DIR *dir = opendir(full_path.c_str());
         if (!dir)
         {
-            const char *error_msg = "450 Failed to open directory\r\n";
-            send(client_socket, error_msg, strlen(error_msg), 0);
+            perror("opendir");
+            send(client_socket, "550 Failed to open directory.\r\n", 32, 0);
             return;
         }
 
         struct dirent *entry;
         struct stat file_stat;
         char file_path[PATH_MAX];
+        char buffer[BUFFER_SIZE];
         std::string listing;
 
-       
         while ((entry = readdir(dir)) != NULL)
         {
-            
+            // Skip `.` and `..`
             if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
                 continue;
 
-            
+            // Build the full path for the current entry
             snprintf(file_path, sizeof(file_path), "%s/%s", full_path.c_str(), entry->d_name);
 
-            
+            // Perform stat on the entry
             if (stat(file_path, &file_stat) != 0)
             {
                 perror("stat");
                 continue;
             }
 
-            
+            // Determine file type and permissions
             char permissions[11];
             snprintf(permissions, sizeof(permissions), "%c%c%c%c%c%c%c%c%c%c",
                      S_ISDIR(file_stat.st_mode) ? 'd' : '-',
@@ -482,35 +500,93 @@ void list_directory(int client_socket, int data_socket, const std::string &relat
                      (file_stat.st_mode & S_IWOTH) ? 'w' : '-',
                      (file_stat.st_mode & S_IXOTH) ? 'x' : '-');
 
-            
-            snprintf(buffer, BUFFER_SIZE, "%s %ld %ld %ld %ld %s\r\n",
-                     permissions,
-                     (long)file_stat.st_nlink,
-                     (long)file_stat.st_uid,
-                     (long)file_stat.st_gid,
-                     (long)file_stat.st_size,
-                     entry->d_name);
+            // Get modification time
+            char time_buffer[20];
+            struct tm *tm_info = localtime(&file_stat.st_mtime);
+            strftime(time_buffer, sizeof(time_buffer), "%b %d %H:%M", tm_info);
 
-            
+            // Format listing entry
+            snprintf(buffer, BUFFER_SIZE, "%s %ld %ld %ld %ld %s %s\r\n",
+                     permissions,              // Permissions
+                     (long)file_stat.st_nlink, // Number of links
+                     (long)file_stat.st_uid,   // User ID of owner
+                     (long)file_stat.st_gid,   // Group ID of owner
+                     (long)file_stat.st_size,  // File size in bytes
+                     time_buffer,              // Last modified time
+                     entry->d_name);           // File name
+
+            // Append to listing
             listing += buffer;
         }
-        // std::cout << "Listing:\n"
-        //           << listing << std::endl;
 
         closedir(dir);
 
 
         if (send(data_socket, listing.c_str(), listing.size(), 0) < 0)
         {
-            std::cout<<"Eroare la trimiterea listei de fisiere\n";
+            perror("send");
+            send(client_socket, "450 Failed to send directory listing.\r\n", 40, 0);
+            return;
         }
 
 
         close(data_socket);
+        send(client_socket, "226 Directory listing completed.\r\n", 35, 0);
+    }
+    catch (const std::exception &e)
+    {
+        const char *error_msg = "550 Invalid path\r\n";
+        send(client_socket, error_msg, strlen(error_msg), 0);
+    }
+}
 
+void NLST(int client_socket, int data_socket, const std::string &relative_path)
+{
+    try
+    {
+        DIR *dir;
+        struct dirent *entry;
+        std::string listing;
+        std::string directory_path = construct_safe_path(relative_path);
+        // Open the directory
+        dir = opendir(directory_path.c_str());
+        if (dir == NULL)
+        {
+            std::cerr << "Failed to open directory: " << directory_path << std::endl;
+            send(client_socket, "550 Failed to open directory.\r\n", 32, 0);
+            return;
+        }
 
-        const char *end_msg = "226 Transfer complete\r\n";
-        send(client_socket, end_msg, strlen(end_msg), 0);
+        // Read each entry in the directory
+        while ((entry = readdir(dir)) != NULL)
+        {
+            // Skip `.` and `..`
+            if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+                continue;
+
+            // Append the file or directory name followed by CRLF
+            listing += entry->d_name;
+            listing += "\r\n";
+        }
+        std::cout << "Here";
+
+        // Close the directory
+        closedir(dir);
+
+        // Send 150 response to indicate data transfer start
+        send(client_socket, "150 Opening data connection for LIST.\r\n", 41, 0);
+
+        // Send the listing to the client over the data socket
+        if (send(data_socket, listing.c_str(), listing.size(), 0) < 0)
+        {
+            std::cerr << "Error sending directory listing.\n";
+        }
+
+        // Send 226 response to indicate successful transfer
+        send(client_socket, "226 Transfer complete.\r\n", 26, 0);
+
+        // Close the data connection
+        close(data_socket);
     }
     catch (const std::exception &e)
     {
