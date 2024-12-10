@@ -44,7 +44,7 @@ cd FTP
 cd FTP-server
 
 # Compile the server
-gcc -o server server.cpp user_repository.cpp
+g++ -std=c++17 -o server server.cpp user_repository.cpp
 
 # Run the server
 ./ftp_server
